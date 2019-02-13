@@ -1,0 +1,341 @@
+______                                __       ____    ______
+/\__  _\                              /\ \     /\  _`\ /\  _  \
+\/_/\ \/    __    ___ ___      __     \ \ \    \ \ \L\_\ \ \L\ \
+   \ \ \  /'__`\/' __` __`\  /'__`\    \ \ \  __\ \  _\/\ \  __ \
+    \ \ \/\  __//\ \/\ \/\ \/\ \L\.\_   \ \ \L\ \\ \ \/  \ \ \/\ \
+     \ \_\ \____\ \_\ \_\ \_\ \__/.\_\   \ \____/ \ \_\   \ \_\ \_\
+      \/_/\/____/\/_/\/_/\/_/\/__/\/_/    \/___/   \/_/    \/_/\/_/
+
+
+
+------------------------  Limbaje Formale si Automate --------------------------
+
+Tema : Interpretor pentru limbajul IMP
+Nume : Niculescu
+Prenume : Mihai Alexandru
+Grupa : 335CB
+Sistem de operare : Ubuntu 18.04 LTS 64bit
+Editor : IntelliJ
+Java : java 10.0.2 2018-07-17
+
+--------------------------------------------------------------------------------
+
+
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<       JFlex      >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    Pentru parcurgerea arborelui rezultat am folosit design pattern visitor
+(pkg visitor).
+    In pachetul ast.node am implementat fiecare tip de nod descris in enuntul,
+fiecare implementand la randul ei interfata ASTNode, care la randual ei extinde
+Visitable (din visitor), adăugând metoda getNumberLine, folosita cand se
+detectează o exceptie. ASTPrinter si Interpretor implementează Visitor, prima
+clasa realizazeaza printarea AST, iar cea de-a interpretarea, rularea codului.
+Excepțiile de compilare sunt identificate cand se realizează crearea arborelui si
+returnate cu ajutorul metodei getExceptions(lexer), iar cele de runtime sunt
+identificate de catre Interpretor. Pentru interpretare se foloseste in HashMap:
+(varibila, valore) (returnat de jflex prin metoda getVariable), fiecare component
+avand comportamentul indicat de nume.
+    Parser-ul in JFlex se alfa in directorul ./src/lexer. Cum o variabila poate
+sa apara atat lhs cat si rhs pentru o atribuire, dar si in la declarare, am
+create niște stări specia : VARIABLE ASSIGMENT EXPRESSION pentru a face
+distincție. Am considerat ca if, while, block, secventa ca o intructiune, la
+final instrucțiunile se vor afla într-o stiva, in ordine inversa:
+
+Code :                                  Stiva la EOF:
+
+varDecla;                               | stmt5 |
+stmt1;                                  +-------+
+stmt2;                                  | stmt4 |
+stmt3;                                  +-------+
+stmt4;                                  | stmt3 |
+stmt5;                                  +-------+
+                                        | stmt2 |
+                                        +-------+
+                                        | stmt1 |
+                                        +-------+
+
+ Pentru acel arbore de SequenceNode se extra doua statement-uri, primul este
+second, iar al doilea este fist(copii acelui tip note, stiva => ordine
+inversata) apoi este pusa secvența creata.
+
+| stmt3 |
++-------+
+| stmt2 |
++-------+
+| stmt1 |
++-------+
+
+second = stmt5 |
+               |  => seq = new SequenceNode(fisrt, second);
+fisrt = stmt4  |
+
+    Stiva rezultata :
+
+|  seq  |
++-------+
+| stmt3 |
++-------+
+| stmt2 |
++-------+
+| stmt1 |
++-------+
+    Si se repeta procedeul pana stack.size() == 1.
+
+    Pentru un block, se adaugă in stiva stament OpenBlock (nu va face parte din
+arborele final, este pentru a identica instrucțiunile din interiorul unui bloc).
+Cand se găsește '}' se toate instrucțiunile, pana la OpenBlock, sunt puse in alta
+stiva, păstrându-se ordinea, daca sunt mai mult de 2 statement-uri se aplica
+procedeul exemplificat mai sus.
+
+    Cand este realizarea AST-ul este importanta precedenta operatorilor, o
+expresie ca a + b / c, ar trebui sa aibă :
+
+        +
+       / \
+      a   /
+         / \
+         b  c
+
+ nu :
+      /
+     / \
+    +   c
+   / \
+  a   b
+
+    De aceia exista o odine intre operatori,: / , +, > , !, && 
+    Am folosit doua stive dedicate pentru acesta : expression (in ea se va afla
+subexpresii) si operators( operator si paranteza deschisa cu prioritatea mai mare).
+Cand se citesc variable sau constante doar sunt puse in expression, cand se un
+operator: daca stiva este goala se pune operatorul, alt fel pana cand in vârful
+stive nu se afla un operator cu prioritate mai mare : se extrage operator si
+apoi operanzi necesari( ordine right, left) si se pune noua expresia. Cand se
+citeste o '(' se pune in stiva operator, iar cand se citeste ')' se scoat
+operatori si se construiesc sub expresi pana cand se întâlnește ')'.
+    Un exemplu : ( a + b / ( d + e ) )
+
+
+    Initial :
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+
+    Citim : (
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+                                    |   (   |
+                                    +-------+
+
+    Citim : a
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   a   |                   |   (   |
+        +-------+                   +-------+
+
+    Citim : +, cum prioritate lui ( este mai mare decat a lui +, daor adaugam +.
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   a   |                   |   +   |
+        +-------+                   +-------+
+                                    |   (   |
+                                    +-------+
+
+    Citim : b
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   b   |                   |   +   |
+        +-------+                   +-------+
+        |   a   |                   |   (   |
+        +-------+                   +-------+
+
+    Citim : /, cum prioritate lui + este mai mare decat a lui /, daor adaugam /
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   b   |                   |   /   |
+        +-------+                   +-------+
+        |   a   |                   |   +   |
+        +-------+                   +-------+
+                                    |   (   |
+                                    +-------+
+
+    Citim : (
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   b   |                   |   (   |
+        +-------+                   +-------+
+        |   a   |                   |   /   |
+        +-------+                   +-------+
+                                    |   +   |
+                                    +-------+
+                                    |   (   |
+                                    +-------+
+
+    Citim : d
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   d   |                   |   (   |
+        +-------+                   +-------+
+        |   b   |                   |   /   |
+        +-------+                   +-------+
+        |   a   |                   |   +   |
+        +-------+                   +-------+
+                                    |   (   |
+                                    +-------+
+
+    Citim : + cum prioritate lui ( este mai mare decat a lui +, daor adaugam +.
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   d   |                   |   +   |
+        +-------+                   +-------+
+        |   b   |                   |   (   |
+        +-------+                   +-------+
+        |   a   |                   |   /   |
+        +-------+                   +-------+
+                                    |   +   |
+                                    +-------+
+                                    |   (   |
+                                    +-------+
+
+    Citim : e
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   e   |                   |   +   |
+        +-------+                   +-------+
+        |   d   |                   |   (   |
+        +-------+                   +-------+
+        |   b   |                   |   /   |
+        +-------+                   +-------+
+        |   a   |                   |   +   |
+        +-------+                   +-------+
+                                    |   (   |
+                                    +-------+
+
+    Citim : ), acum scoatem + si e , d =>   +   =  A
+                                           / \
+                                          d   e
+              o sa-l notez cu A (noul nod), apoi, paranteza deschisa => B = (A)
+
+
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   B   |                   |   /   |
+        +-------+                   +-------+
+        |   b   |                   |   +   |
+        +-------+                   +-------+
+        |   a   |                   |   (   |
+        +-------+                   +-------+
+
+    Citim : ), scaotem / si B, b =>    /    =  C
+                                      / \
+                                     b   B
+        expression                  operators
+
+        |       |                   |       |
+        +-------+                   +-------+
+        |   C   |                   |   +   |
+        +-------+                   +-------+
+        |   a   |                   |   (   |
+        +-------+                   +-------+
+
+            scaotem + si C, a  =>   +      =  D
+                                   / \
+                                  a   C
+
+            parenateza deschisa => E = (D)
+
+    Rezultatul este expresia E:
+
+    E   =>      ( )   =>   ( )   =>   ( )     =>    ( )    =>    ( )
+                 |          |          |             |            |
+                 D          +          +             +            +
+                           / \        / \           / \          / \
+                          a   C      a   /         a   /        a   /
+                                        / \           / \          / \
+                                        b  B         b  ( )       b  ( )
+                                                         |            |
+                                                         A            +
+                                                                     / \
+                                                                    d   e
+
+
+    Daca dupa ce se citește toata expresia, stiva: expression nu este goala,
+atunci se foloseste metoda : reduceExpr.
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+
+
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<       ANTLR      >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+    Gramatica se afla in directorul ./src/grammar. Ea este in mare parte cea
+descrisa in enuntul temei, diferenta fiind gramatica pentru sequence si cea
+pentru expresi, cea descrisa in enutul temei era ambigua.
+    Pentru expresii am pornit de la gramtica prezentata la cursul 6 din data de
+31.10.2018 (sala PR001) si https://ocw.cs.pub.ro/ppcarte/doku.php?id=lfa:parser.
+    Pentru expresiile aritmetice trebui sa se respecte precedenta intre + si /.
+De acest motiv o expresie "suma" o sa aibă in componenta o expresie "div", ca
+exemplu a + b / c. Ar trebui sa aibă arborele rezultat :
+
+        +
+       / \
+      a   /
+         / \
+         b  c
+
+ nu :
+      /
+     / \
+    +   c
+   / \
+  a   b
+
+    Gramatica :
+    S -> S + D | D
+    D -> A / D | A
+    A -> [0-9]+ | [a-z]+
+
+    Gramatica de mai sus asigura precedenta operatorilor. Pe aceiasi idee 
+s-a construit gramatica si pentru expresiile booleana.
+    Problema la acesta este ca se construiesc mai multe noduri in arbore.
+    Exemplu : 12
+        Arborele : arithmeticExpr
+                   sumExpr:1
+                   divExpr:1
+                   atomNum:1
+                   "12"
+    De aceia exista acele etichete cu next.
+
+    Pentru parcurge exista clasa MyVisitor (din pkg antlr) care extinde
+IMPGrammarBaseVisitor.
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
